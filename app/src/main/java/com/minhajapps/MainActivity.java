@@ -1,107 +1,71 @@
 package com.minhajapps;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.app.DownloadManager;
 import android.content.ActivityNotFoundException;
-import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
-import android.graphics.Color;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
-import android.provider.Settings;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
-import android.webkit.URLUtil;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.Toast;
-
-import org.json.JSONObject;
-
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
 
 public class MainActivity extends Activity {
 
     private static final String SITE_URL =
             "https://mdmahinafrad-pixel.github.io/Minhaj-Apps/";
 
-    /*
-     * Keep this file in the Minhaj-Apps1 repository.
-     * The GitHub Action updates it automatically when the website logo changes.
-     */
-    private static final String UPDATE_JSON_URL =
-            "https://raw.githubusercontent.com/mdmahinafrad-pixel/Minhaj-Apps1/main/update.json";
-
-    private WebView web;
-    private long updateDownloadId = -1L;
-
-    private final BroadcastReceiver downloadReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            if (DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())) {
-                long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L);
-                if (id == updateDownloadId) {
-                    installDownloadedApk(id);
-                }
-            }
-        }
-    };
+    private WebView webView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        web = new WebView(this);
-        setContentView(web);
+        webView = new WebView(this);
+        setContentView(webView);
 
-        WebSettings s = web.getSettings();
-        s.setJavaScriptEnabled(true);
-        s.setDomStorageEnabled(true);
-        s.setDatabaseEnabled(true);
-        s.setJavaScriptCanOpenWindowsAutomatically(true);
-        s.setSupportMultipleWindows(false);
-        s.setMediaPlaybackRequiresUserGesture(false);
-        s.setBuiltInZoomControls(false);
-        s.setDisplayZoomControls(false);
-        s.setSupportZoom(false);
-        s.setAllowFileAccess(true);
-        s.setAllowContentAccess(true);
-        s.setCacheMode(WebSettings.LOAD_NO_CACHE);
+        WebSettings settings = webView.getSettings();
 
-        CookieManager cookies = CookieManager.getInstance();
-        cookies.setAcceptCookie(true);
-        cookies.setAcceptThirdPartyCookies(web, true);
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setDatabaseEnabled(true);
+        settings.setAllowFileAccess(true);
+        settings.setAllowContentAccess(true);
+        settings.setJavaScriptCanOpenWindowsAutomatically(true);
+        settings.setSupportMultipleWindows(false);
+        settings.setMediaPlaybackRequiresUserGesture(false);
 
-        web.setBackgroundColor(Color.TRANSPARENT);
-        web.setWebChromeClient(new WebChromeClient());
+        // Always load the current live website.
+        settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
 
-        web.setWebViewClient(new WebViewClient() {
+        CookieManager.getInstance().setAcceptCookie(true);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+
+        webView.setWebChromeClient(new WebChromeClient());
+
+        webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(
                     WebView view, WebResourceRequest request) {
+
                 return handleUrl(request.getUrl().toString());
             }
 
             @Override
             public boolean shouldOverrideUrlLoading(
                     WebView view, String url) {
+
                 return handleUrl(url);
             }
         });
 
-        web.setDownloadListener(new DownloadListener() {
+        webView.setDownloadListener(new DownloadListener() {
             @Override
             public void onDownloadStart(
                     String url,
@@ -109,199 +73,52 @@ public class MainActivity extends Activity {
                     String contentDisposition,
                     String mimeType,
                     long contentLength) {
+
                 downloadFile(url, userAgent, contentDisposition, mimeType);
             }
         });
 
-        registerUpdateReceiver();
-        web.loadUrl(SITE_URL);
-
-        // Check the online update file after the website starts.
-        checkForUpdate();
-    }
-
-    private void registerUpdateReceiver() {
-        IntentFilter filter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(downloadReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(downloadReceiver, filter);
-        }
-    }
-
-    private void checkForUpdate() {
-        new Thread(() -> {
-            HttpURLConnection connection = null;
-            try {
-                URL url = new URL(UPDATE_JSON_URL + "?t=" + System.currentTimeMillis());
-                connection = (HttpURLConnection) url.openConnection();
-                connection.setConnectTimeout(10000);
-                connection.setReadTimeout(10000);
-                connection.setUseCaches(false);
-
-                InputStream input = connection.getInputStream();
-                BufferedReader reader =
-                        new BufferedReader(new InputStreamReader(input, "UTF-8"));
-
-                StringBuilder result = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    result.append(line);
-                }
-                reader.close();
-
-                JSONObject data = new JSONObject(result.toString());
-
-                int onlineCode = data.optInt("versionCode", 1);
-                String onlineName = data.optString("versionName", "");
-                String apkUrl = data.optString("apkUrl", "");
-                String notes = data.optString("notes", "নতুন আপডেট পাওয়া গেছে।");
-
-                int currentCode = BuildConfig.VERSION_CODE;
-
-                if (onlineCode > currentCode && !apkUrl.isEmpty()) {
-                    runOnUiThread(() ->
-                            showUpdateDialog(onlineCode, onlineName, apkUrl, notes)
-                    );
-                }
-
-            } catch (Exception ignored) {
-                // No internet/update file: continue opening the website normally.
-            } finally {
-                if (connection != null) connection.disconnect();
-            }
-        }).start();
-    }
-
-    private void showUpdateDialog(
-            int onlineCode,
-            String onlineName,
-            String apkUrl,
-            String notes) {
-
-        new AlertDialog.Builder(this)
-                .setTitle("MINHAJ APPS Update")
-                .setMessage(
-                        "নতুন Version " + onlineName + " পাওয়া গেছে।\n\n" +
-                        notes + "\n\n" +
-                        "Update দিলে নতুন APK ইনস্টল হবে এবং নতুন Logo/Icon আসবে।"
-                )
-                .setNegativeButton("পরে", null)
-                .setPositiveButton("Update", (dialog, which) ->
-                        downloadUpdate(apkUrl, onlineName)
-                )
-                .setCancelable(true)
-                .show();
-    }
-
-    private void downloadUpdate(String apkUrl, String versionName) {
-        try {
-            DownloadManager.Request request =
-                    new DownloadManager.Request(Uri.parse(apkUrl));
-
-            request.setTitle("MINHAJ APPS " + versionName);
-            request.setDescription("নতুন MINHAJ APPS আপডেট ডাউনলোড হচ্ছে");
-            request.setNotificationVisibility(
-                    DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
-            );
-            request.setMimeType("application/vnd.android.package-archive");
-            request.setDestinationInExternalPublicDir(
-                    Environment.DIRECTORY_DOWNLOADS,
-                    "MINHAJ-APPS-" + versionName.replace(".", "_") + ".apk"
-            );
-
-            DownloadManager manager =
-                    (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
-
-            updateDownloadId = manager.enqueue(request);
-
-            Toast.makeText(
-                    this,
-                    "Update download শুরু হয়েছে",
-                    Toast.LENGTH_SHORT
-            ).show();
-
-        } catch (Exception e) {
-            Toast.makeText(
-                    this,
-                    "Update download শুরু করা যায়নি",
-                    Toast.LENGTH_LONG
-            ).show();
-        }
-    }
-
-    private void installDownloadedApk(long downloadId) {
-        try {
-            DownloadManager manager =
-                    (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
-
-            Uri apkUri = manager.getUriForDownloadedFile(downloadId);
-
-            if (apkUri == null) {
-                Toast.makeText(this, "APK পাওয়া যায়নি", Toast.LENGTH_LONG).show();
-                return;
-            }
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                    && !getPackageManager().canRequestPackageInstalls()) {
-
-                Intent settings = new Intent(
-                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                        Uri.parse("package:" + getPackageName())
-                );
-                startActivity(settings);
-
-                Toast.makeText(
-                        this,
-                        "এই অ্যাপের জন্য Install unknown apps অনুমতি দিন, তারপর APK ইনস্টল করুন।",
-                        Toast.LENGTH_LONG
-                ).show();
-                return;
-            }
-
-            Intent install = new Intent(Intent.ACTION_VIEW);
-            install.setDataAndType(
-                    apkUri,
-                    "application/vnd.android.package-archive"
-            );
-            install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            install.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-
-            startActivity(install);
-
-        } catch (ActivityNotFoundException e) {
-            Toast.makeText(this, "APK installer পাওয়া যায়নি", Toast.LENGTH_LONG).show();
-        } catch (Exception e) {
-            Toast.makeText(this, "APK install করা যায়নি", Toast.LENGTH_LONG).show();
-        }
+        webView.loadUrl(SITE_URL);
     }
 
     private boolean handleUrl(String url) {
-        if (url == null || url.trim().isEmpty()) return false;
+        if (url == null || url.length() == 0) {
+            return false;
+        }
 
         String lower = url.toLowerCase();
 
+        // Telegram links
         if (lower.startsWith("tg://")
                 || lower.startsWith("telegram://")
-                || lower.startsWith("intent://")
-                || lower.startsWith("market://")
                 || lower.contains("t.me/")
-                || lower.contains("telegram.me/")
-                || lower.contains("play.google.com/store")) {
+                || lower.contains("telegram.me/")) {
+
             openExternal(url);
             return true;
         }
 
-        if (looksLikeDownload(url)) {
+        // Play Store links
+        if (lower.startsWith("market://")
+                || lower.contains("play.google.com/store")) {
+
+            openExternal(url);
+            return true;
+        }
+
+        // File/download links
+        if (isDownloadUrl(lower)) {
             downloadFile(url, null, null, null);
             return true;
         }
 
-        if (lower.startsWith("https://mdmahinafrad-pixel.github.io/minhaj-apps/")
-                || lower.startsWith("http://mdmahinafrad-pixel.github.io/minhaj-apps/")) {
+        // Keep the MINHAJ APPS website inside the app.
+        if (lower.startsWith("https://mdmahinafrad-pixel.github.io/")
+                || lower.startsWith("http://mdmahinafrad-pixel.github.io/")) {
             return false;
         }
 
+        // Other external websites open outside the app.
         if (lower.startsWith("http://") || lower.startsWith("https://")) {
             openExternal(url);
             return true;
@@ -310,28 +127,15 @@ public class MainActivity extends Activity {
         return false;
     }
 
-    private boolean looksLikeDownload(String url) {
-        String lower = url.toLowerCase();
-        return lower.contains(".apk")
-                || lower.contains(".xapk")
-                || lower.contains(".apks")
-                || lower.contains(".zip")
-                || lower.contains(".rar")
-                || lower.contains("download.php")
-                || lower.contains("/download/")
-                || lower.contains("post-download");
-    }
-
-    private void openExternal(String url) {
-        try {
-            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
-        } catch (Exception e) {
-            Toast.makeText(
-                    this,
-                    "লিংকটি খোলা যাচ্ছে না",
-                    Toast.LENGTH_SHORT
-            ).show();
-        }
+    private boolean isDownloadUrl(String url) {
+        return url.contains(".apk")
+                || url.contains(".xapk")
+                || url.contains(".apks")
+                || url.contains(".zip")
+                || url.contains(".rar")
+                || url.contains("download.php")
+                || url.contains("/download/")
+                || url.contains("post-download");
     }
 
     private void downloadFile(
@@ -344,54 +148,100 @@ public class MainActivity extends Activity {
             DownloadManager.Request request =
                     new DownloadManager.Request(Uri.parse(url));
 
+            request.setTitle("MINHAJ APPS Download");
+            request.setDescription("Downloading file...");
             request.setNotificationVisibility(
-                    DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
-            );
+                    DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
 
-            request.setTitle(
-                    URLUtil.guessFileName(url, contentDisposition, mimeType)
-            );
-
-            request.setDescription("MINHAJ APPS থেকে ডাউনলোড হচ্ছে");
-
-            if (mimeType != null && !mimeType.isEmpty()) {
+            if (mimeType != null && mimeType.length() > 0) {
                 request.setMimeType(mimeType);
             }
 
-            if (userAgent != null && !userAgent.isEmpty()) {
+            if (userAgent != null) {
                 request.addRequestHeader("User-Agent", userAgent);
             }
 
-            String cookie = CookieManager.getInstance().getCookie(url);
-            if (cookie != null && !cookie.isEmpty()) {
-                request.addRequestHeader("Cookie", cookie);
+            String cookies = CookieManager.getInstance()
+                    .getCookie(url);
+
+            if (cookies != null) {
+                request.addRequestHeader("Cookie", cookies);
             }
 
             request.setDestinationInExternalPublicDir(
                     Environment.DIRECTORY_DOWNLOADS,
-                    URLUtil.guessFileName(url, contentDisposition, mimeType)
-            );
+                    getFileName(url, contentDisposition));
 
             DownloadManager manager =
-                    (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                    (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
 
-            manager.enqueue(request);
-
-            Toast.makeText(
-                    this,
-                    "ডাউনলোড শুরু হয়েছে",
-                    Toast.LENGTH_SHORT
-            ).show();
+            if (manager != null) {
+                manager.enqueue(request);
+            } else {
+                openExternal(url);
+            }
 
         } catch (Exception e) {
+            // If Android DownloadManager cannot handle the URL,
+            // open it in the browser instead.
             openExternal(url);
+        }
+    }
+
+    private String getFileName(String url, String contentDisposition) {
+
+        if (contentDisposition != null) {
+            String lower = contentDisposition.toLowerCase();
+
+            int index = lower.indexOf("filename=");
+
+            if (index >= 0) {
+                String name = contentDisposition
+                        .substring(index + 9)
+                        .replace("\"", "")
+                        .trim();
+
+                if (name.length() > 0) {
+                    return name;
+                }
+            }
+        }
+
+        try {
+            String path = Uri.parse(url).getPath();
+
+            if (path != null) {
+                int slash = path.lastIndexOf('/');
+
+                if (slash >= 0 && slash < path.length() - 1) {
+                    String name = path.substring(slash + 1);
+
+                    if (name.length() > 0) {
+                        return name;
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        return "MINHAJ-APPS-Download";
+    }
+
+    private void openExternal(String url) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            startActivity(intent);
+        } catch (ActivityNotFoundException e) {
+            // No compatible external app/browser was found.
+        } catch (Exception ignored) {
         }
     }
 
     @Override
     public void onBackPressed() {
-        if (web != null && web.canGoBack()) {
-            web.goBack();
+
+        if (webView != null && webView.canGoBack()) {
+            webView.goBack();
         } else {
             super.onBackPressed();
         }
@@ -399,16 +249,15 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        try {
-            unregisterReceiver(downloadReceiver);
-        } catch (Exception ignored) {}
 
-        if (web != null) {
-            web.stopLoading();
-            web.destroy();
-            web = null;
+        if (webView != null) {
+            webView.stopLoading();
+            webView.setWebChromeClient(null);
+            webView.setWebViewClient(null);
+            webView.destroy();
+            webView = null;
         }
 
         super.onDestroy();
     }
-                    }
+            }
