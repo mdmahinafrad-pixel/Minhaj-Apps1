@@ -10,6 +10,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
+import android.webkit.URLUtil;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -31,7 +32,6 @@ public class MainActivity extends Activity {
         setContentView(webView);
 
         WebSettings settings = webView.getSettings();
-
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
@@ -40,12 +40,11 @@ public class MainActivity extends Activity {
         settings.setJavaScriptCanOpenWindowsAutomatically(true);
         settings.setSupportMultipleWindows(false);
         settings.setMediaPlaybackRequiresUserGesture(false);
-
-        // Always load the current live website.
         settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
 
-        CookieManager.getInstance().setAcceptCookie(true);
-        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+        CookieManager cookies = CookieManager.getInstance();
+        cookies.setAcceptCookie(true);
+        cookies.setAcceptThirdPartyCookies(webView, true);
 
         webView.setWebChromeClient(new WebChromeClient());
 
@@ -53,72 +52,60 @@ public class MainActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(
                     WebView view, WebResourceRequest request) {
-
                 return handleUrl(request.getUrl().toString());
             }
 
             @Override
             public boolean shouldOverrideUrlLoading(
                     WebView view, String url) {
-
                 return handleUrl(url);
             }
         });
 
         webView.setDownloadListener(new DownloadListener() {
             @Override
-            public void onDownloadStart(
-                    String url,
-                    String userAgent,
-                    String contentDisposition,
-                    String mimeType,
-                    long contentLength) {
-
-                downloadFile(url, userAgent, contentDisposition, mimeType);
+            public void onDownloadStart(String url, String userAgent,
+                                        String contentDisposition,
+                                        String mimeType, long contentLength) {
+                startDownload(url, userAgent, contentDisposition, mimeType);
             }
         });
+
+        webView.addJavascriptInterface(
+                new DownloadBridge(this), "MINHAJ_APP");
 
         webView.loadUrl(SITE_URL);
     }
 
     private boolean handleUrl(String url) {
-        if (url == null || url.length() == 0) {
-            return false;
-        }
+        if (url == null || url.trim().isEmpty()) return false;
 
         String lower = url.toLowerCase();
 
-        // Telegram links
         if (lower.startsWith("tg://")
                 || lower.startsWith("telegram://")
                 || lower.contains("t.me/")
                 || lower.contains("telegram.me/")) {
-
             openExternal(url);
             return true;
         }
 
-        // Play Store links
         if (lower.startsWith("market://")
                 || lower.contains("play.google.com/store")) {
-
             openExternal(url);
             return true;
         }
 
-        // File/download links
         if (isDownloadUrl(lower)) {
-            downloadFile(url, null, null, null);
+            startDownload(url, null, null, null);
             return true;
         }
 
-        // Keep the MINHAJ APPS website inside the app.
         if (lower.startsWith("https://mdmahinafrad-pixel.github.io/")
                 || lower.startsWith("http://mdmahinafrad-pixel.github.io/")) {
             return false;
         }
 
-        // Other external websites open outside the app.
         if (lower.startsWith("http://") || lower.startsWith("https://")) {
             openExternal(url);
             return true;
@@ -135,37 +122,47 @@ public class MainActivity extends Activity {
                 || url.contains(".rar")
                 || url.contains("download.php")
                 || url.contains("/download/")
-                || url.contains("post-download");
+                || url.contains("post-download")
+                || url.contains("download");
     }
 
-    private void downloadFile(
-            String url,
-            String userAgent,
-            String contentDisposition,
-            String mimeType) {
-
+    private void startDownload(String url, String userAgent,
+                               String contentDisposition, String mimeType) {
         try {
-            DownloadManager.Request request =
-                    new DownloadManager.Request(Uri.parse(url));
+            Uri uri = Uri.parse(url);
 
-            request.setTitle("MINHAJ APPS Download");
-            request.setDescription("Downloading file...");
+            if (uri.getScheme() == null
+                    || (!uri.getScheme().equalsIgnoreCase("http")
+                    && !uri.getScheme().equalsIgnoreCase("https"))) {
+                openExternal(url);
+                return;
+            }
+
+            DownloadManager.Request request =
+                    new DownloadManager.Request(uri);
+
+            request.setTitle(getFileName(url, contentDisposition));
+            request.setDescription("MINHAJ APPS Download");
             request.setNotificationVisibility(
                     DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setAllowedOverMetered(true);
+            request.setAllowedOverRoaming(true);
 
-            if (mimeType != null && mimeType.length() > 0) {
+            if (mimeType != null && !mimeType.isEmpty()) {
                 request.setMimeType(mimeType);
             }
 
-            if (userAgent != null) {
-                request.addRequestHeader("User-Agent", userAgent);
+            String ua = userAgent;
+            if (ua == null || ua.isEmpty()) {
+                ua = webView.getSettings().getUserAgentString();
+            }
+            if (ua != null && !ua.isEmpty()) {
+                request.addRequestHeader("User-Agent", ua);
             }
 
-            String cookies = CookieManager.getInstance()
-                    .getCookie(url);
-
-            if (cookies != null) {
-                request.addRequestHeader("Cookie", cookies);
+            String cookie = CookieManager.getInstance().getCookie(url);
+            if (cookie != null && !cookie.isEmpty()) {
+                request.addRequestHeader("Cookie", cookie);
             }
 
             request.setDestinationInExternalPublicDir(
@@ -180,66 +177,52 @@ public class MainActivity extends Activity {
             } else {
                 openExternal(url);
             }
-
         } catch (Exception e) {
-            // If Android DownloadManager cannot handle the URL,
-            // open it in the browser instead.
             openExternal(url);
         }
     }
 
     private String getFileName(String url, String contentDisposition) {
+        String fileName = URLUtil.guessFileName(
+                url, contentDisposition, "application/octet-stream");
 
-        if (contentDisposition != null) {
-            String lower = contentDisposition.toLowerCase();
-
-            int index = lower.indexOf("filename=");
-
-            if (index >= 0) {
-                String name = contentDisposition
-                        .substring(index + 9)
-                        .replace("\"", "")
-                        .trim();
-
-                if (name.length() > 0) {
-                    return name;
-                }
-            }
+        if (fileName == null || fileName.trim().isEmpty()) {
+            fileName = "MINHAJ-APPS-Download";
         }
 
-        try {
-            String path = Uri.parse(url).getPath();
-
-            if (path != null) {
-                int slash = path.lastIndexOf('/');
-
-                if (slash >= 0 && slash < path.length() - 1) {
-                    String name = path.substring(slash + 1);
-
-                    if (name.length() > 0) {
-                        return name;
-                    }
-                }
-            }
-        } catch (Exception ignored) {
-        }
-
-        return "MINHAJ-APPS-Download";
+        return fileName;
     }
 
     private void openExternal(String url) {
         try {
-            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-            startActivity(intent);
-        } catch (ActivityNotFoundException e) {
-            // No compatible external app/browser was found.
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (ActivityNotFoundException ignored) {
         } catch (Exception ignored) {
+        }
+    }
+
+    public static class DownloadBridge {
+        private final MainActivity activity;
+
+        DownloadBridge(MainActivity activity) {
+            this.activity = activity;
+        }
+
+        @android.webkit.JavascriptInterface
+        public void download(final String url) {
+            if (url == null || url.trim().isEmpty()) return;
+
+            activity.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    activity.startDownload(url, null, null, null);
+                }
+            });
         }
     }
 
     @Override
     public void onBackPressed() {
-
         if (webView != null && webView.canGoBack()) {
             webView.goBack();
         } else {
@@ -249,7 +232,6 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-
         if (webView != null) {
             webView.stopLoading();
             webView.setWebChromeClient(null);
@@ -257,7 +239,6 @@ public class MainActivity extends Activity {
             webView.destroy();
             webView = null;
         }
-
         super.onDestroy();
     }
             }
